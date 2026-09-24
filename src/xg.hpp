@@ -203,11 +203,21 @@ public:
     /// Build the graph from another path handle graph.
     /// The order in which nodes are enumerated becomes the XG's node order.
     /// Note that we will get the best efficiency if the graph enumerates itself in topological order.
-    void from_path_handle_graph(const PathHandleGraph& graph);
+    /// on_input_consumed, if provided, runs once no further input reads are
+    /// needed. It may release input storage before reverse indexes are built.
+    /// on_path_read, if provided, runs serially after each path traversal and
+    /// receives that path's step count (including zero for empty paths). It
+    /// must not mutate graph content or invalidate graph handles.
+    void from_path_handle_graph(const PathHandleGraph& graph,
+                                const std::function<void()>& on_input_consumed = {},
+                                const std::function<void(size_t)>& on_path_read = {});
 
     /// Use external enumerators to drive graph construction.
     /// The order in which nodes are enumerated becomes the XG's node order.
     /// Note that we will get the best efficiency if the graph is enumerated in topological order.
+    /// on_input_consumed runs exactly once on successful construction, before
+    /// reverse indexing unless validate is true, in which case it runs after
+    /// validation. No enumerator is invoked after this callback.
     void from_enumerators(const std::function<void(const std::function<void(const std::string& seq, const nid_t& node_id)>&)>& for_each_sequence,
                           const std::function<void(const std::function<void(const nid_t& from, const bool& from_rev,
                                                                             const nid_t& to, const bool& to_rev)>&)>& for_each_edge,
@@ -215,7 +225,8 @@ public:
                                                                             const nid_t& node_id, const bool& is_rev,
                                                                             const std::string& cigar, const bool& is_empty,
                                                                             const bool& is_circular)>&)>& for_each_path_element,
-                          bool validate = false, std::string basename = "");
+                          bool validate = false, std::string basename = "",
+                          const std::function<void()>& on_input_consumed = {});
 
     /// Use a memory-mapped GFA file to build the index in low memory
     void from_gfa(const std::string& gfa_filename, bool validate = false, std::string basename = "");
@@ -581,6 +592,8 @@ public:
     handle_t local_handle(const handle_t& handle) const;
     handle_t external_handle(const handle_t& handle) const;
     handle_t handle(size_t offset) const;
+    /// Visit handles in step-rank order, decoding each enc_vector sample block once.
+    void for_each_handle(const std::function<void(size_t, const handle_t&)>& iteratee) const;
     handle_t handle_at_position(size_t pos) const;
     size_t handle_start(size_t offset) const;
     size_t step_rank_at_position(size_t pos) const;
