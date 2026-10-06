@@ -808,7 +808,7 @@ void XG::from_handle_graph(const HandleGraph& graph) {
 }
 
 /// build the graph from another path handle graph
-void XG::from_path_handle_graph(const PathHandleGraph& graph) {
+void XG::from_path_handle_graph(const PathHandleGraph& graph, const std::function<void()>& input_consumed) {
     // set up our enumerators
     auto for_each_sequence = [&](const std::function<void(const std::string& seq, const nid_t& node_id)>& lambda) {
         graph.for_each_handle([&](const handle_t& handle) {
@@ -839,7 +839,7 @@ void XG::from_path_handle_graph(const PathHandleGraph& graph) {
                 }
             });
     };
-    from_enumerators(for_each_sequence, for_each_edge, for_each_path_element, false);
+    from_enumerators(for_each_sequence, for_each_edge, for_each_path_element, false, "", input_consumed);
 }
 
 void XG::from_enumerators(const std::function<void(const std::function<void(const std::string& seq, const nid_t& node_id)>&)>& for_each_sequence,
@@ -849,7 +849,7 @@ void XG::from_enumerators(const std::function<void(const std::function<void(cons
                                                                             const nid_t& node_id, const bool& is_rev,
                                                                             const std::string& cigar, const bool& is_empty,
                                                                             const bool& is_circular)>&)>& for_each_path_element,
-                          bool validate, std::string basename) {
+                          bool validate, std::string basename, const std::function<void()>& input_consumed) {
 
     if (basename.empty()) {
         basename = temp_file::create();
@@ -1148,6 +1148,7 @@ void XG::from_enumerators(const std::function<void(const std::function<void(cons
     path_names += path_name_csa_delim; // final delimiter for search symmetry
     curr_path_steps.clear();
     curr_is_circular = false;
+    if (input_consumed && !validate) { input_consumed(); }
 #ifdef VERBOSE_DEBUG
     std::cerr << path_count << " of " << path_count << " ~ 100.0000%" << std::endl;
 #endif
@@ -1308,6 +1309,8 @@ void XG::from_enumerators(const std::function<void(const std::function<void(cons
         check_accumulated_path();
         curr_path_steps.clear();
     }
+
+    if (input_consumed && validate) { input_consumed(); }
 
 #ifdef DEBUG_CONSTRUCTION
     std::cerr << "|g_iv| = " << size_in_mega_bytes(g_iv) << std::endl;

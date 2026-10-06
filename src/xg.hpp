@@ -203,9 +203,11 @@ public:
     /// Build the graph from another path handle graph.
     /// The order in which nodes are enumerated becomes the XG's node order.
     /// Note that we will get the best efficiency if the graph enumerates itself in topological order.
-    void from_path_handle_graph(const PathHandleGraph& graph);
+    /// Runs input_consumed after the final input read; the callback may release the input.
+    void from_path_handle_graph(const PathHandleGraph& graph, const std::function<void()>& input_consumed = {});
 
     /// Use external enumerators to drive graph construction.
+    /// Runs input_consumed after the final input read, including validation reads.
     /// The order in which nodes are enumerated becomes the XG's node order.
     /// Note that we will get the best efficiency if the graph is enumerated in topological order.
     void from_enumerators(const std::function<void(const std::function<void(const std::string& seq, const nid_t& node_id)>&)>& for_each_sequence,
@@ -215,7 +217,8 @@ public:
                                                                             const nid_t& node_id, const bool& is_rev,
                                                                             const std::string& cigar, const bool& is_empty,
                                                                             const bool& is_circular)>&)>& for_each_path_element,
-                          bool validate = false, std::string basename = "");
+                          bool validate = false, std::string basename = "",
+                          const std::function<void()>& input_consumed = {});
 
     /// Use a memory-mapped GFA file to build the index in low memory
     void from_gfa(const std::string& gfa_filename, bool validate = false, std::string basename = "");
