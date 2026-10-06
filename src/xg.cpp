@@ -1443,114 +1443,58 @@ uint64_t XG::encode_edge(const size_t& offest_from, const size_t& offset_to,
 }
 
 void XG::index_node_to_path(const std::string& basename) {
-    
-    // node -> paths
-    // use the mmmultimap...
-    std::string node_path_idx = basename + ".node_path.mm";
-    auto node_path_mm = std::make_unique<mmmulti::map<uint64_t, std::tuple<uint64_t, uint64_t, uint64_t>>>(node_path_idx, std::make_tuple(0,0,0));
-    node_path_mm->open_writer();
-    uint64_t path_step_count = 0;
-    // for each path...
-    // could be done in parallel
-    for (size_t i = 1; i <= paths.size(); ++i) {
-        // Go through paths by number, so we can determine rank
-        path_handle_t path_handle = as_path_handle(i);
-        const XGPath& path = *paths[i-1];
-#ifdef debug_path_index
-        std::cerr << "Indexing path " << &path << " at index " << i-1 << " of " << paths.size() << std::endl; 
-#endif
-        uint64_t pos = 0;
-#ifdef VERBOSE_DEBUG
-        if (i % 100 == 0) std::cerr << i << " of " << path_count << " ~ " << (float)i/(float)path_count * 100 << "%" << "\r";
-#endif
+    // Count visits before allocating the final index. This scratch space is
+    // proportional to nodes, not steps (a transcript graph can have billions
+    // of steps on only a few million nodes). Node ranks start at 1.
+    std::vector<uint64_t> next(node_count + 1, 0);
+    for (size_t i = 0; i < paths.size(); ++i) {
+        const XGPath& path = *paths[i];
         for (size_t j = 0; j < path.handles.size(); ++j) {
-            handle_t handle = path.handle(j);
-            
-#ifdef debug_path_index
-            std::cerr << "Look at handle " << j << " of " << path.handles.size() << ": "
-                << get_id(handle) << (get_is_reverse(handle) ? "-" : "+") << " with value " << as_integer(handle) << std::endl;
-                
-            std::cerr << "Handle is for node at g vector position " << handlegraph::number_bool_packing::unpack_number(handle)
-                << " of " << g_iv.size() << " and node length will be at "
-                << handlegraph::number_bool_packing::unpack_number(handle) + G_NODE_LENGTH_OFFSET << std::endl;
-#endif
-            uint64_t handle_length = get_length(handle);
-            bool is_rev = number_bool_packing::unpack_bit(handle);
-            // and record the relative orientation by packing it into the position
-            uint64_t path_and_rev = as_integer(number_bool_packing::pack(as_integer(path_handle), is_rev));
-            // determine the path relative position on the forward strand
-            uint64_t adj_pos = is_rev ? pos + handle_length - 1: pos;
-            node_path_mm->append(id_to_rank(get_id(handle)),
-                                std::make_tuple(path_and_rev, j, adj_pos));
-            ++path_step_count;
-            pos += handle_length;
+            ++next[id_to_rank(get_id(path.handle(j)))];
         }
     }
-#ifdef VERBOSE_DEBUG
-    std::cerr << path_count << " of " << path_count << " ~ 100.0000%" << std::endl;
-#endif
-    node_path_mm->index(get_thread_count(), node_count+1);
-    
-#ifdef VERBOSE_DEBUG
-    std::cerr << "determining size of node to path position mappings" << std::endl;
-#endif
+
     uint64_t np_size = 0;
-    for (int64_t i = 0; i < node_count; ++i) {
-#ifdef VERBOSE_DEBUG
-        if (i % 1000 == 0) std::cerr << i << " of " << node_count << " ~ " << (float)i/(float)node_count * 100 << "%" << "\r";
-#endif
-        uint64_t has_steps = false;
-        node_path_mm->for_values_of(i+1, [&](const std::tuple<uint64_t, uint64_t, uint64_t>& v) {
-            ++np_size;
-            has_steps = true;
-        });
-        if (!has_steps) ++np_size; // skip over null entry
+    for (size_t rank = 1; rank <= node_count; ++rank) {
+        // Nodes without visits retain one zero entry, as in the padded index.
+        np_size += std::max(uint64_t(1), next[rank]);
     }
-#ifdef VERBOSE_DEBUG
-    std::cerr << node_count << " of " << node_count << " ~ 100.0000%" << std::endl;
-#endif
     sdsl::util::assign(np_iv, sdsl::int_vector<>(np_size));
     sdsl::util::assign(nr_iv, sdsl::int_vector<>(np_size));
     sdsl::util::assign(nx_iv, sdsl::int_vector<>(np_size));
     sdsl::util::assign(np_bv, sdsl::bit_vector(np_size));
-    // now we need to map this into a new data structure for node->path position mappings
-#ifdef VERBOSE_DEBUG
-    std::cerr << "recording node to path position mappings" << std::endl;
-#endif
-    uint64_t np_offset = 0;
-    for (int64_t i = 0; i < node_count; ++i) {
-#ifdef VERBOSE_DEBUG
-        if (i % 1000 == 0) std::cerr << i << " of " << node_count << " ~ " << (float)i/(float)node_count * 100 << "%" << "\r";
-#endif
-        np_bv[np_offset] = 1; // mark node start
-        //uint64_t idx = number_bool_packing::pack(i, false)+1;
-        uint64_t has_steps = false;
-        node_path_mm->for_values_of(i+1, [&](const std::tuple<uint64_t, uint64_t, uint64_t>& v) {
-            np_iv[np_offset] = std::get<0>(v); // packed path and rev
-            nr_iv[np_offset] = std::get<1>(v); // rank of step in path
-            nx_iv[np_offset] = std::get<2>(v); // offset from path start on forward handle
-            ++np_offset;
-            has_steps = true;
-        });
-        if (!has_steps) ++np_offset; // skip over null entry
+
+    uint64_t offset = 0;
+    for (size_t rank = 1; rank <= node_count; ++rank) {
+        uint64_t count = std::max(uint64_t(1), next[rank]);
+        next[rank] = offset;
+        np_bv[offset] = 1;
+        offset += count;
     }
-    
-    /*
-     std::cerr << std::endl;
-     std::cerr << "np_bv ";
-     for (uint64_t i = 0; i < np_bv.size(); ++i) std:cerr << np_bv[i] << " ";
-     std::cerr << std::endl;
-     std::cerr << "np_iv " << np_iv << std::endl;
-     std::cerr << "nr_iv " << nr_iv << std::endl;
-     std::cerr << "nx_iv " << nx_iv << std::endl;
-     */
-    
-#ifdef VERBOSE_DEBUG
-    std::cerr << node_count << " of " << node_count << " ~ 100.0000%" << std::endl;
-#endif
-    node_path_mm.reset();
-    std::remove(node_path_idx.c_str());
-    // TODO, evaluate if these should be compressed more intensely
+
+    // The old external sort ordered each node's occurrences by
+    // (packed path/orientation, step rank, position). Visit paths in rank order
+    // and each path's forward steps before its reverse steps to produce exactly
+    // that order directly. In particular, mixed-orientation repeats of a node
+    // must not be emitted in ordinary path-step order.
+    for (size_t i = 0; i < paths.size(); ++i) {
+        const XGPath& path = *paths[i];
+        for (bool reverse : { false, true }) {
+            uint64_t pos = 0;
+            uint64_t path_and_rev = as_integer(number_bool_packing::pack(i + 1, reverse));
+            for (size_t j = 0; j < path.handles.size(); ++j) {
+                handle_t handle = path.handle(j);
+                uint64_t length = get_length(handle);
+                if (get_is_reverse(handle) == reverse) {
+                    uint64_t dest = next[id_to_rank(get_id(handle))]++;
+                    np_iv[dest] = path_and_rev;
+                    nr_iv[dest] = j;
+                    nx_iv[dest] = reverse ? pos + length - 1 : pos;
+                }
+                pos += length;
+            }
+        }
+    }
     sdsl::util::bit_compress(np_iv);
     sdsl::util::bit_compress(nr_iv);
     sdsl::util::bit_compress(nx_iv);
