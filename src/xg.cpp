@@ -1447,10 +1447,21 @@ void XG::index_node_to_path(const std::string& basename) {
     // proportional to nodes, not steps (a transcript graph can have billions
     // of steps on only a few million nodes). Node ranks start at 1.
     std::vector<uint64_t> next(node_count + 1, 0);
+    uint64_t max_path_and_rev = 0, max_step_rank = 0, max_position = 0;
     for (size_t i = 0; i < paths.size(); ++i) {
         const XGPath& path = *paths[i];
+        uint64_t pos = 0;
         for (size_t j = 0; j < path.handles.size(); ++j) {
-            ++next[id_to_rank(get_id(path.handle(j)))];
+            handle_t handle = path.handle(j);
+            uint64_t length = get_length(handle);
+            bool reverse = get_is_reverse(handle);
+            uint64_t path_and_rev = as_integer(number_bool_packing::pack(i + 1, reverse));
+            uint64_t adj_pos = reverse ? pos + length - 1 : pos;
+            ++next[id_to_rank(get_id(handle))];
+            max_path_and_rev = std::max(max_path_and_rev, path_and_rev);
+            max_step_rank = std::max(max_step_rank, uint64_t(j));
+            max_position = std::max(max_position, adj_pos);
+            pos += length;
         }
     }
 
@@ -1459,9 +1470,9 @@ void XG::index_node_to_path(const std::string& basename) {
         // Nodes without visits retain one zero entry, as in the padded index.
         np_size += std::max(uint64_t(1), next[rank]);
     }
-    sdsl::util::assign(np_iv, sdsl::int_vector<>(np_size));
-    sdsl::util::assign(nr_iv, sdsl::int_vector<>(np_size));
-    sdsl::util::assign(nx_iv, sdsl::int_vector<>(np_size));
+    sdsl::util::assign(np_iv, sdsl::int_vector<>(np_size, 0, sdsl::bits::hi(max_path_and_rev) + 1));
+    sdsl::util::assign(nr_iv, sdsl::int_vector<>(np_size, 0, sdsl::bits::hi(max_step_rank) + 1));
+    sdsl::util::assign(nx_iv, sdsl::int_vector<>(np_size, 0, sdsl::bits::hi(max_position) + 1));
     sdsl::util::assign(np_bv, sdsl::bit_vector(np_size));
 
     uint64_t offset = 0;
@@ -1495,9 +1506,6 @@ void XG::index_node_to_path(const std::string& basename) {
             }
         }
     }
-    sdsl::util::bit_compress(np_iv);
-    sdsl::util::bit_compress(nr_iv);
-    sdsl::util::bit_compress(nx_iv);
     sdsl::util::assign(np_bv_select, sdsl::bit_vector::select_1_type(&np_bv));
 }
 
