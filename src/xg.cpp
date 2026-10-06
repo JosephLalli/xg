@@ -1447,7 +1447,7 @@ uint64_t XG::encode_edge(const size_t& offest_from, const size_t& offset_to,
 // Decode each sample block once for sequential construction scans. Repeated
 // operator[] calls otherwise decode the same prefix at every offset.
 template<class Iteratee>
-static void for_each_path_handle(const XGPath& path, const Iteratee& iteratee) {
+static void scan_path_handles(const XGPath& path, const Iteratee& iteratee) {
     std::array<uint64_t, sdsl::enc_vector<>::sample_dens> relative{};
     for (size_t begin = 0; begin < path.handles.size(); begin += relative.size()) {
         const size_t block = begin / relative.size();
@@ -1455,7 +1455,7 @@ static void for_each_path_handle(const XGPath& path, const Iteratee& iteratee) {
         const uint64_t sample = path.handles.sample(block);
         const size_t end = std::min(begin + relative.size(), size_t(path.handles.size()));
         for (size_t offset = begin; offset < end; ++offset) {
-            iteratee(offset, external_handle(as_handle(sample + relative[offset - begin])));
+            iteratee(offset, path.external_handle(as_handle(sample + relative[offset - begin])));
         }
     }
 }
@@ -1481,7 +1481,7 @@ void XG::index_node_to_path(const std::string& basename) {
 #ifdef VERBOSE_DEBUG
         if (i % 100 == 0) std::cerr << i << " of " << path_count << " ~ " << (float)i/(float)path_count * 100 << "%" << "\r";
 #endif
-        for_each_path_handle(path, [&](size_t j, const handle_t& handle) {
+        scan_path_handles(path, [&](size_t j, const handle_t& handle) {
             
 #ifdef debug_path_index
             std::cerr << "Look at handle " << j << " of " << path.handles.size() << ": "
