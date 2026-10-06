@@ -1,5 +1,7 @@
 #include "xg.hpp"
 
+#include <array>
+
 //#include "ips4o.hpp"
 #include "mmmultimap.hpp"
 
@@ -1442,6 +1444,22 @@ uint64_t XG::encode_edge(const size_t& offest_from, const size_t& offset_to,
     return edge;
 }
 
+// Decode each sample block once for sequential construction scans. Repeated
+// operator[] calls otherwise decode the same prefix at every offset.
+template<class Iteratee>
+static void scan_path_handles(const XGPath& path, const Iteratee& iteratee) {
+    std::array<uint64_t, sdsl::enc_vector<>::sample_dens> relative{};
+    for (size_t begin = 0; begin < path.handles.size(); begin += relative.size()) {
+        const size_t block = begin / relative.size();
+        path.handles.get_inter_sampled_values(block, relative.data());
+        const uint64_t sample = path.handles.sample(block);
+        const size_t end = std::min(begin + relative.size(), size_t(path.handles.size()));
+        for (size_t offset = begin; offset < end; ++offset) {
+            iteratee(offset, path.external_handle(as_handle(sample + relative[offset - begin])));
+        }
+    }
+}
+
 void XG::index_node_to_path(const std::string& basename) {
     // Count visits before allocating the final index. This scratch space is
     // proportional to nodes, not steps (a transcript graph can have billions
@@ -1451,8 +1469,7 @@ void XG::index_node_to_path(const std::string& basename) {
     for (size_t i = 0; i < paths.size(); ++i) {
         const XGPath& path = *paths[i];
         uint64_t pos = 0;
-        for (size_t j = 0; j < path.handles.size(); ++j) {
-            handle_t handle = path.handle(j);
+        scan_path_handles(path, [&](size_t j, const handle_t& handle) {
             uint64_t length = get_length(handle);
             bool reverse = get_is_reverse(handle);
             uint64_t path_and_rev = as_integer(number_bool_packing::pack(i + 1, reverse));
@@ -1462,7 +1479,7 @@ void XG::index_node_to_path(const std::string& basename) {
             max_step_rank = std::max(max_step_rank, uint64_t(j));
             max_position = std::max(max_position, adj_pos);
             pos += length;
-        }
+        });
     }
 
     uint64_t np_size = 0;
@@ -1470,10 +1487,10 @@ void XG::index_node_to_path(const std::string& basename) {
         // Nodes without visits retain one zero entry, as in the padded index.
         np_size += std::max(uint64_t(1), next[rank]);
     }
-    sdsl::util::assign(np_iv, sdsl::int_vector<>(np_size, 0, sdsl::bits::hi(max_path_and_rev) + 1));
-    sdsl::util::assign(nr_iv, sdsl::int_vector<>(np_size, 0, sdsl::bits::hi(max_step_rank) + 1));
-    sdsl::util::assign(nx_iv, sdsl::int_vector<>(np_size, 0, sdsl::bits::hi(max_position) + 1));
-    sdsl::util::assign(np_bv, sdsl::bit_vector(np_size));
+    np_iv = sdsl::int_vector<>(np_size, 0, sdsl::bits::hi(max_path_and_rev) + 1);
+    nr_iv = sdsl::int_vector<>(np_size, 0, sdsl::bits::hi(max_step_rank) + 1);
+    nx_iv = sdsl::int_vector<>(np_size, 0, sdsl::bits::hi(max_position) + 1);
+    np_bv = sdsl::bit_vector(np_size);
 
     uint64_t offset = 0;
     for (size_t rank = 1; rank <= node_count; ++rank) {
@@ -1493,8 +1510,7 @@ void XG::index_node_to_path(const std::string& basename) {
         for (bool reverse : { false, true }) {
             uint64_t pos = 0;
             uint64_t path_and_rev = as_integer(number_bool_packing::pack(i + 1, reverse));
-            for (size_t j = 0; j < path.handles.size(); ++j) {
-                handle_t handle = path.handle(j);
+            scan_path_handles(path, [&](size_t j, const handle_t& handle) {
                 uint64_t length = get_length(handle);
                 if (get_is_reverse(handle) == reverse) {
                     uint64_t dest = next[id_to_rank(get_id(handle))]++;
@@ -1503,7 +1519,7 @@ void XG::index_node_to_path(const std::string& basename) {
                     nx_iv[dest] = reverse ? pos + length - 1 : pos;
                 }
                 pos += length;
-            }
+            });
         }
     }
     sdsl::util::assign(np_bv_select, sdsl::bit_vector::select_1_type(&np_bv));
