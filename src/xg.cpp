@@ -1,5 +1,7 @@
 #include "xg.hpp"
 
+#include <array>
+
 //#include "ips4o.hpp"
 #include "mmmultimap.hpp"
 
@@ -1442,6 +1444,22 @@ uint64_t XG::encode_edge(const size_t& offest_from, const size_t& offset_to,
     return edge;
 }
 
+// Decode each sample block once for sequential construction scans. Repeated
+// operator[] calls otherwise decode the same prefix at every offset.
+template<class Iteratee>
+static void scan_path_handles(const XGPath& path, const Iteratee& iteratee) {
+    std::array<uint64_t, sdsl::enc_vector<>::sample_dens> relative{};
+    for (size_t begin = 0; begin < path.handles.size(); begin += relative.size()) {
+        const size_t block = begin / relative.size();
+        path.handles.get_inter_sampled_values(block, relative.data());
+        const uint64_t sample = path.handles.sample(block);
+        const size_t end = std::min(begin + relative.size(), size_t(path.handles.size()));
+        for (size_t offset = begin; offset < end; ++offset) {
+            iteratee(offset, path.external_handle(as_handle(sample + relative[offset - begin])));
+        }
+    }
+}
+
 void XG::index_node_to_path(const std::string& basename) {
     
     // node -> paths
@@ -1463,8 +1481,7 @@ void XG::index_node_to_path(const std::string& basename) {
 #ifdef VERBOSE_DEBUG
         if (i % 100 == 0) std::cerr << i << " of " << path_count << " ~ " << (float)i/(float)path_count * 100 << "%" << "\r";
 #endif
-        for (size_t j = 0; j < path.handles.size(); ++j) {
-            handle_t handle = path.handle(j);
+        scan_path_handles(path, [&](size_t j, const handle_t& handle) {
             
 #ifdef debug_path_index
             std::cerr << "Look at handle " << j << " of " << path.handles.size() << ": "
@@ -1484,7 +1501,7 @@ void XG::index_node_to_path(const std::string& basename) {
                                 std::make_tuple(path_and_rev, j, adj_pos));
             ++path_step_count;
             pos += handle_length;
-        }
+        });
     }
 #ifdef VERBOSE_DEBUG
     std::cerr << path_count << " of " << path_count << " ~ 100.0000%" << std::endl;
