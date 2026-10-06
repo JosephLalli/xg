@@ -1509,10 +1509,10 @@ void XG::index_node_to_path(const std::string& basename) {
 #ifdef VERBOSE_DEBUG
     std::cerr << node_count << " of " << node_count << " ~ 100.0000%" << std::endl;
 #endif
-    sdsl::util::assign(np_iv, sdsl::int_vector<>(np_size));
-    sdsl::util::assign(nr_iv, sdsl::int_vector<>(np_size));
-    sdsl::util::assign(nx_iv, sdsl::int_vector<>(np_size));
-    sdsl::util::assign(np_bv, sdsl::bit_vector(np_size));
+    np_iv = sdsl::int_vector<>(np_size);
+    nr_iv = sdsl::int_vector<>(np_size);
+    nx_iv = sdsl::int_vector<>(np_size);
+    np_bv = sdsl::bit_vector(np_size);
     // now we need to map this into a new data structure for node->path position mappings
 #ifdef VERBOSE_DEBUG
     std::cerr << "recording node to path position mappings" << std::endl;
